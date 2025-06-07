@@ -1,14 +1,8 @@
 ## Class Prototype-Driven Global-Local Discriminative Weakly Supervised Semantic Segmentation
 
-<div align="center">
-
-<br>
-  <img width="100%" alt="CPDGL flowchart" src="./docs/imgs/CPDGL.png">
-</div>
-
 <!-- ## Abastract -->
-
-We proposed Token Contrast to address the over-smoothing issue and further leverage the virtue of ViT for the Weakly-Supervised Semantic Segmentation task.
+##  Abstract
+We proposed a novel framework named CPDGL. By centering on class prototypes, CPDGL effectively aligns global semantic representations with local fine-grained features, facilitating more accurate semantic modeling and segmentation learning under image-level supervision.
 
 ## Data Preparations
 <details>
@@ -70,6 +64,10 @@ MSCOCO/
 
 ## Create environment
 
+```bash
+Continuously updating
+```
+
 ### Clone this repo
 
 ```bash
@@ -78,18 +76,21 @@ git clone https://github.com/quqihjq/final
 
 ### Train
 
+```bash
+Continuously updating
+```
+
 ## Citation
 Please kindly cite our paper if you find it's helpful in your work.
 
 ``` bibtex
-@inproceedings{ru2023token,
-    title = {Token Contrast for Weakly-Supervised Semantic Segmentation},
-    author = {Lixiang Ru and Heliang Zheng and Yibing Zhan and Bo Du}
-    booktitle = {CVPR},
-    year = {2023},
-  }
+If you find **CPDGL** useful in your research, please consider citing our work:
+
+> *Engineering Applications of Artificial Intelligence, 2025.*
+
+We will update the citation with the official DOI once the paper is accepted.
 ```
 
 ## Acknowledgement
 
-We mainly use [ViT-B](https://github.com/huggingface/pytorch-image-models/blob/main/timm/models/vit.py) and [DeiT-B](https://github.com/huggingface/pytorch-image-models/blob/main/timm/models/deit.py) as the backbone, which are based on [timm](https://github.com/huggingface/pytorch-image-models). 
+We mainly use [ViT-B](https://github.com/huggingface/pytorch-image-models/blob/main/timm/models/vit.py) and [DeiT-B](https://github.com/huggingface/pytorch-image-models/blob/main/timm/models/deit.py) as the backbone. 
