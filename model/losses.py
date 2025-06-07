@@ -17,51 +17,51 @@ class LCL_Loss(nn.Module):
         self.temperature = temperature
         self.base_temperature = base_temperature
 
-    def cal_pos_logit(self, flags, queue_flags_all, logits, n_iter):
-        mask_all_pos = flags == queue_flags_all.T
+    def cal_pos_logit(self, flags, q_flags, logits, n_iter):
+        mask_pos = flags == q_flags.T
 
         idx_m1, _ = torch.where(flags == -1)
-        mask_all_pos[idx_m1] = 0
+        mask_pos[idx_m1] = 0
 
-        logits[idx_m1] = 0  # 设
-        logits_filtered_pos = logits * mask_all_pos
+        logits[idx_m1] = 0  #
+        pos = logits * mask_pos
 
         # filter wrong labeled pos pairs
         if n_iter >= 0:  # for stable determination
 
-            mean_sim = logits_filtered_pos.mean(dim=1, keepdim=True)
-            _pos_logits_index = logits_filtered_pos >= mean_sim
-            _wrong_pos_logits_index = logits_filtered_pos < mean_sim
-            if (_wrong_pos_logits_index.sum(dim=1) / (_pos_logits_index.sum(dim=1) + 1e-6)).max() > 10:
+            mean_sim = pos.mean(dim=1, keepdim=True)
+            _pos_index = pos >= mean_sim
+            _wrong_pos = pos < mean_sim
+            if (_wrong_pos.sum(dim=1) / (_pos_index.sum(dim=1) + 1e-6)).max() > 10:
                 flags = flags.new_zeros(flags.size())
-                logits_filtered_pos = logits_filtered_pos.new_zeros(logits_filtered_pos.size())
+                pos = pos.new_zeros(pos.size())
 
-        queue_index = torch.where(queue_flags_all == -1)[0]
+        queue_index = torch.where(q_flags == -1)[0]
         logits[:, queue_index] = 0.0
 
-        return logits_filtered_pos, logits, flags
+        return pos, logits, flags
 
-    def forward(self, output_q, queue_all, flags, queue_flags_all, n_iter):
+    def forward(self, output_q, q_all, flags, q_flags, n_iter):
         b = output_q.shape[0]  # batch size
 
         anchor_dot_contrast = torch.div(
-            torch.matmul(output_q, queue_all[b:].T), self.temperature)
+            torch.matmul(output_q, q_all[b:].T), self.temperature)
 
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits_all = anchor_dot_contrast - logits_max.detach()
 
-        logits_pos, logits_all, flags_revised = self.cal_pos_logit(flags, queue_flags_all[b:], logits_all, n_iter)
+        pos, logits_all, flags = self.cal_pos_logit(flags, q_flags[b:], logits_all, n_iter)
 
         #  log_prob
         exp_logits = torch.exp(logits_all)
         exp_logits = exp_logits * (exp_logits != 1.0)
-        log_prob = logits_pos - torch.log(exp_logits.sum(dim=1, keepdim=True) + 1e-12)
+        log_prob = pos - torch.log(exp_logits.sum(dim=1, keepdim=True) + 1e-12)
 
         loss = torch.tensor(0.0, device=output_q.device)
 
-        nonzero_logits_pos = logits_pos != 0
+        nonzero_pos = pos != 0
 
-        valid_mask = nonzero_logits_pos.any(dim=1)  # [48]
+        valid_mask = nonzero_pos.any(dim=1)  # [48]
 
         valid_log_prob = log_prob[valid_mask]
         valid_exp_logits = exp_logits.sum(dim=1, keepdim=True)[valid_mask]
@@ -80,9 +80,9 @@ class PCL_Loss(nn.Module):
         self.temperature = temperature
         self.base_temperature = base_temperature
 
-    def cal_pos_logit(self,flags,prototype_flags,logits):
+    def cal_pos_logit(self,flags,pro_flags,logits):
         
-        mask_all_pos = flags == prototype_flags.T #24*20
+        mask_pos = flags == pro_flags.T #24*20
         cls_index_ = torch.unique(flags)
         cls_index = cls_index_[cls_index_!=-1]
         cls_index = cls_index[cls_index!=0]
@@ -91,25 +91,25 @@ class PCL_Loss(nn.Module):
             col = int(idx - 1)
             prototype_cls_mask[:,col] = 1
 
-        logits_filtered_pos = logits * mask_all_pos #24*20
+        pos = logits * mask_pos #24*20
         # filter wrong labled pos pairs
-        logits_filtered_all = logits * prototype_cls_mask #24*20
+        filtered_all = logits * prototype_cls_mask #24*20
         # prevent nan 
 
-        return logits_filtered_pos, logits_filtered_all, mask_all_pos
+        return pos, filtered_all, mask_pos
 
 
-    def forward(self, output_q, prototypes,flags):
+    def forward(self, output_q, prot,flags):
         """
         Cross-entropy between softmax outputs of the teacher and student networks.
         output_q        :(20,DIM) 10*b,
-        prototypes      :(20,DIM) 20
+        prot      :(20,DIM) 20
         flags           :(20,1)
         """
-        num_cls = prototypes.shape[0]
+        num_cls = prot.shape[0]
         b = output_q.shape[0]
-        prototypes_flag = torch.arange(1,num_cls+1).reshape(-1,1).to(flags.device) #20*1 1,2,3,...,20 for VOC
-        logits = torch.matmul(output_q, prototypes.T) #24*20
+        prot_flag = torch.arange(1,num_cls+1).reshape(-1,1).to(flags.device) #20*1 1,2,3,...,20 for VOC
+        logits = torch.matmul(output_q, prot.T) #24*20
         logits = torch.div(logits , self.temperature)
 
         # for numerical stability
@@ -117,18 +117,18 @@ class PCL_Loss(nn.Module):
         logits_all = logits - logits_max.detach()
         logits_all = logits #24*20
 
-        logits_pos, logits_all, mask_pos_pos = self.cal_pos_logit(flags,prototypes_flag,logits_all) #24*20
+        pos, logits_all, mask = self.cal_pos_logit(flags,prot_flag,logits_all) #24*20
 
         # compute log_prob
         exp_logits = torch.exp(logits_all)
         exp_logits = exp_logits * (exp_logits != 1.0000) # only calculate the appeared class
-        log_prob = logits_pos - torch.log(exp_logits.sum(1, keepdim=True) + 1e-12)
+        log_prob = pos - torch.log(exp_logits.sum(1, keepdim=True) + 1e-12)
 
-        logits_pos_mask = logits_pos != 0
-        log_prob = log_prob * logits_pos_mask #24*20
+        pos_mask = pos != 0
+        log_prob = log_prob * pos_mask #24*20
 
         loss = torch.tensor([0.0]).to(output_q.device)
-        for idx in range(logits_pos.shape[0]):
+        for idx in range(pos.shape[0]):
             exp_logits_value = exp_logits.sum(1, keepdim=True) #24*1
             if exp_logits_value[idx] > 0:
                 loss += log_prob[idx].sum()
@@ -137,10 +137,10 @@ class PCL_Loss(nn.Module):
                 pass
 
         # compute mean of log-likelihood over positive
-        if mask_pos_pos.sum() > 0:
-            mean_log_prob_pos = loss / mask_pos_pos.sum()
+        if mask.sum() > 0:
+            mean_log_prob_pos = loss / mask.sum()
         else:
-            mean_log_prob_pos =  loss / logits_pos.shape[0]
+            mean_log_prob_pos =  loss / pos.shape[0]
 
         # loss
         loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
