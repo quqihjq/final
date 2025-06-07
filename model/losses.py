@@ -10,6 +10,53 @@ import torch.distributed as dist
 sys.path.append("./wrapper/bilateralfilter/build/lib.linux-x86_64-3.8")
 # from bilateralfilter import bilateralfilter, bilateralfilter_batch
 
+class PCL_Loss(nn.Module):
+    def __init__(self, temperature=0.07, base_temperature=0.07, margin=0.3):
+        super().__init__()
+        self.temperature = temperature
+        self.base_temperature = base_temperature
+        self.margin = margin  
+
+    def forward(self, output_q, prototypes, flags):
+        """
+        output_q: (B, D)
+        prototypes: (C, D)
+        flags: (B,) → 样本所属类别 (1~C)，其中-1或0视为背景或无效样本
+        """
+        device = output_q.device
+        num_cls = prototypes.size(0)
+        valid_mask = (flags > 0)
+
+        output_q = output_q[valid_mask]
+        flags = flags[valid_mask]
+
+        if output_q.size(0) == 0:
+            return torch.tensor(0.0).to(device)
+
+        logits = torch.matmul(output_q, prototypes.T) / self.temperature  # (B, C)
+
+        pos_mask = torch.zeros_like(logits).to(device)
+        for i, cls in enumerate(flags):
+            pos_mask[i, cls - 1] = 1 
+
+        neg_mask = 1 - pos_mask 
+
+       
+        pos_logits = logits * pos_mask
+        exp_logits = torch.exp(logits - logits.max(dim=1, keepdim=True)[0])
+        log_prob = pos_logits - torch.log(exp_logits.sum(dim=1, keepdim=True) + 1e-12)
+
+       
+        pos_loss = -(log_prob * pos_mask).sum() / (pos_mask.sum() + 1e-6)
+
+       
+        neg_logits = logits * neg_mask
+        neg_max_margin = F.relu(neg_logits.max(dim=1)[0] - self.margin).mean()
+
+      
+        loss = pos_loss + neg_max_margin
+
+        return loss
 
 class LCL_Loss(nn.Module):
     def __init__(self, temperature=0.07, base_temperature=0.07):
@@ -72,80 +119,6 @@ class LCL_Loss(nn.Module):
         loss = - (self.temperature / self.base_temperature) * loss
 
         return loss, flags
-
-
-class PCL_Loss(nn.Module):
-    def __init__(self, temperature=0.07, base_temperature=0.07):
-        super().__init__()
-        self.temperature = temperature
-        self.base_temperature = base_temperature
-
-    def cal_pos_logit(self,flags,pro_flags,logits):
-        
-        mask_pos = flags == pro_flags.T #24*20
-        cls_index_ = torch.unique(flags)
-        cls_index = cls_index_[cls_index_!=-1]
-        cls_index = cls_index[cls_index!=0]
-        prototype_cls_mask = torch.zeros_like(mask_all_pos).to(flags.device) #24*20
-        for idx in cls_index:
-            col = int(idx - 1)
-            prototype_cls_mask[:,col] = 1
-
-        pos = logits * mask_pos #24*20
-        # filter wrong labled pos pairs
-        filtered_all = logits * prototype_cls_mask #24*20
-        # prevent nan 
-
-        return pos, filtered_all, mask_pos
-
-
-    def forward(self, output_q, prot,flags):
-        """
-        Cross-entropy between softmax outputs of the teacher and student networks.
-        output_q        :(20,DIM) 10*b,
-        prot      :(20,DIM) 20
-        flags           :(20,1)
-        """
-        num_cls = prot.shape[0]
-        b = output_q.shape[0]
-        prot_flag = torch.arange(1,num_cls+1).reshape(-1,1).to(flags.device) #20*1 1,2,3,...,20 for VOC
-        logits = torch.matmul(output_q, prot.T) #24*20
-        logits = torch.div(logits , self.temperature)
-
-        # for numerical stability
-        logits_max, _ = torch.max(logits, dim=1, keepdim=True) #24*1
-        logits_all = logits - logits_max.detach()
-        logits_all = logits #24*20
-
-        pos, logits_all, mask = self.cal_pos_logit(flags,prot_flag,logits_all) #24*20
-
-        # compute log_prob
-        exp_logits = torch.exp(logits_all)
-        exp_logits = exp_logits * (exp_logits != 1.0000) # only calculate the appeared class
-        log_prob = pos - torch.log(exp_logits.sum(1, keepdim=True) + 1e-12)
-
-        pos_mask = pos != 0
-        log_prob = log_prob * pos_mask #24*20
-
-        loss = torch.tensor([0.0]).to(output_q.device)
-        for idx in range(pos.shape[0]):
-            exp_logits_value = exp_logits.sum(1, keepdim=True) #24*1
-            if exp_logits_value[idx] > 0:
-                loss += log_prob[idx].sum()
-                # loss_num += 1
-            else:
-                pass
-
-        # compute mean of log-likelihood over positive
-        if mask.sum() > 0:
-            mean_log_prob_pos = loss / mask.sum()
-        else:
-            mean_log_prob_pos =  loss / pos.shape[0]
-
-        # loss
-        loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
-
-        return loss
 
 
 def get_seg_loss(pred, label, ignore_index=255):
